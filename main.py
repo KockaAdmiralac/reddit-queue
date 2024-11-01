@@ -111,6 +111,7 @@ if __name__ == "__main__":
     db = DB()
     subreddit = auth_to_reddit(config, db)
     webhook = get_webhook(config)
+    webhook.send("Service started.")
     state = ErrorState()
     while True:
         try:
