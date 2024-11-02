@@ -102,8 +102,9 @@ def delete_resolved_reports(
     for report in unresolved_reports:
         report_id = report[0]
         if report_id not in current_reports:
-            webhook.delete_message(db.get_message_id(report_id))
+            message_id = db.get_message_id(report_id)
             db.mark_report_resolved(report_id)
+            webhook.delete_message(message_id)
 
 
 if __name__ == "__main__":
