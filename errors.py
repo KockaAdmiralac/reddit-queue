@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import sys
+import traceback
 
 import discord
 from discord.errors import HTTPException
@@ -37,7 +38,7 @@ def handle_exception(
             state.reddit_server_errors += 1
             if state.reddit_server_errors == 5:
                 try_send_report(webhook, "Warning: frequent Reddit server errors.")
-                print(exception, file=sys.stderr)
+                traceback.print_exception(exception)
         else:
             state.other_errors += 1
             if state.other_errors == 5:
@@ -46,7 +47,7 @@ def handle_exception(
                 try_send_report(
                     webhook, f"Reddit error {exception.response.status_code}."
                 )
-                print(exception, file=sys.stderr)
+                traceback.print_exception(exception)
     elif isinstance(exception, RequestException):
         state.reddit_request_errors += 1
         if state.reddit_request_errors == 5:
@@ -56,18 +57,18 @@ def handle_exception(
             state.discord_server_errors += 1
             if state.discord_server_errors == 5:
                 try_send_report(webhook, "Warning: frequent Discord server errors.")
-                print(exception, file=sys.stderr)
+                traceback.print_exception(exception)
         else:
             state.other_errors += 1
             if state.other_errors == 5:
                 try_send_report(webhook, "Reporting further errors stopped.")
             elif state.other_errors <= 5:
                 try_send_report(webhook, f"Discord error {exception.status}.")
-                print(exception, file=sys.stderr)
+                traceback.print_exception(exception)
     else:
         state.other_errors += 1
         if state.other_errors == 5:
             try_send_report(webhook, "Reporting further errors stopped.")
         elif state.other_errors <= 5:
             try_send_report(webhook, "Unknown error.")
-            print(exception, file=sys.stderr)
+            traceback.print_exception(exception)
