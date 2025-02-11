@@ -74,7 +74,11 @@ def create_post_em(submission: Submission) -> discord.Embed:
         color=0x00BCD4,
     ).set_author(name=f"u/{submission.author}")
     if not submission.is_self and hasattr(submission, "preview"):
-        em.set_thumbnail(url=submission.preview["images"][0]["resolutions"][0]["url"])
+        img = submission.preview["images"][0]
+        if len(img["resolutions"]) > 0:
+            em.set_thumbnail(url=submission.preview["images"][0]["resolutions"][0]["url"])
+        else:
+            em.set_thumbnail(url=submission.preview["images"][0]["source"]["url"])
     return em
 
 
