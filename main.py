@@ -24,7 +24,7 @@ def auth_to_reddit(config: configparser.ConfigParser, db: DB) -> Subreddit:
     reddit = praw.Reddit(
         client_id=config["Reddit"]["ClientID"],
         client_secret=config["Reddit"]["ClientSecret"],
-        redirect_uri="https://kocka.tech",
+        redirect_uri=config["Reddit"]["RedirectURI"],
         user_agent="r/UndertaleYellow mod queue relay by u/KockaAdmiralac",
         refresh_token=refresh_token,
     )
