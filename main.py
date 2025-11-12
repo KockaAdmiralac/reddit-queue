@@ -4,6 +4,7 @@ import time
 from typing import List
 
 import discord
+from discord.errors import HTTPException
 import praw
 from praw.models import Comment, Submission, Subreddit
 
@@ -108,7 +109,12 @@ def delete_resolved_reports(
         if report_id not in current_reports:
             message_id = db.get_message_id(report_id)
             db.mark_report_resolved(report_id)
-            webhook.delete_message(message_id)
+            try:
+                webhook.delete_message(message_id)
+            except HTTPException as e:
+                # Ignore error if the message has already been deleted.
+                if e.status != 404:
+                    raise
 
 
 if __name__ == "__main__":
