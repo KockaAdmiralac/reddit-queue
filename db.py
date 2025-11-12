@@ -29,18 +29,23 @@ class DB:
     def is_report_added(self, submission_id: str):
         return (
             self.db.execute(
-                "SELECT rowid FROM reports WHERE submission_id = ?", (submission_id,)
+                "SELECT rowid FROM reports WHERE submission_id = ?",
+                (submission_id,)
             ).fetchone()
             is not None
         )
 
     def get_message_id(self, submission_id: str):
         return self.db.execute(
-            "SELECT message_id FROM reports WHERE submission_id = ?", (submission_id,)
+            "SELECT message_id FROM reports WHERE submission_id = ?",
+            (submission_id,)
         ).fetchone()[0]
 
     def mark_report_resolved(self, submission_id: str):
-        self.db.execute("DELETE FROM reports WHERE submission_id = ?", (submission_id,))
+        self.db.execute(
+            "DELETE FROM reports WHERE submission_id = ?",
+            (submission_id,)
+        )
         self.db.commit()
 
     def get_unresolved_reports(self):

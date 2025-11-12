@@ -6,7 +6,6 @@ from typing import List
 import discord
 import praw
 from praw.models import Comment, Submission, Subreddit
-from praw.models.listing.mixins import subreddit
 
 from db import DB
 from errors import ErrorState, handle_exception
@@ -31,13 +30,13 @@ def auth_to_reddit(config: configparser.ConfigParser, db: DB) -> Subreddit:
     )
     if refresh_token is None:
         if not sys.stdin.isatty():
-            raise Exception(
-                "No refresh token in the database, please use interactive mode."
-            )
-        print(
-            "Use the URL:",
-            reddit.auth.url(scopes=["read"], state="123", duration="permanent"),
-        )
+            raise Exception("No refresh token in the database, please use "
+                            "interactive mode.")
+        print("Use the URL:", reddit.auth.url(
+            scopes=["read"],
+            state="123",
+            duration="permanent"
+        ))
         code = input("Give the code: ")
         refresh_token = reddit.auth.authorize(code)
         if refresh_token is not None:
@@ -76,9 +75,10 @@ def create_post_em(submission: Submission) -> discord.Embed:
     if not submission.is_self and hasattr(submission, "preview"):
         img = submission.preview["images"][0]
         if len(img["resolutions"]) > 0:
-            em.set_thumbnail(url=submission.preview["images"][0]["resolutions"][0]["url"])
+            url = submission.preview["images"][0]["resolutions"][0]["url"]
         else:
-            em.set_thumbnail(url=submission.preview["images"][0]["source"]["url"])
+            url = submission.preview["images"][0]["source"]["url"]
+        em.set_thumbnail(url=url)
     return em
 
 

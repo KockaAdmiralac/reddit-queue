@@ -37,7 +37,8 @@ def handle_exception(
         if exception.response.status_code in (500, 503):
             state.reddit_server_errors += 1
             if state.reddit_server_errors == 5:
-                try_send_report(webhook, "Warning: frequent Reddit server errors.")
+                try_send_report(webhook, "Warning: frequent Reddit server "
+                                         "errors.")
                 traceback.print_exception(exception)
         else:
             state.other_errors += 1
@@ -51,12 +52,14 @@ def handle_exception(
     elif isinstance(exception, RequestException):
         state.reddit_request_errors += 1
         if state.reddit_request_errors == 5:
-            try_send_report(webhook, "Warning: frequent Reddit request errors.")
+            try_send_report(webhook, "Warning: frequent Reddit request "
+                                     "errors.")
     elif isinstance(exception, HTTPException):
         if exception.status in (500, 503):
             state.discord_server_errors += 1
             if state.discord_server_errors == 5:
-                try_send_report(webhook, "Warning: frequent Discord server errors.")
+                try_send_report(webhook, "Warning: frequent Discord server "
+                                         "errors.")
                 traceback.print_exception(exception)
         else:
             state.other_errors += 1
