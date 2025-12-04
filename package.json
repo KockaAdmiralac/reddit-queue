@@ -1,0 +1,22 @@
+{
+    "private": true,
+    "name": "reddit-queue",
+    "version": "0.0.0",
+    "license": "MIT",
+    "type": "module",
+    "scripts": {
+        "deploy": "devvit upload",
+        "dev": "dotenv -e .env -- devvit playtest",
+        "login": "devvit login",
+        "launch": "devvit publish",
+        "type-check": "tsc --build"
+    },
+    "dependencies": {
+        "@devvit/public-api": "0.12.5"
+    },
+    "devDependencies": {
+        "devvit": "0.12.5",
+        "dotenv-cli": "8.0.0",
+        "typescript": "5.8.3"
+    }
+}
