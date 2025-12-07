@@ -6,7 +6,7 @@ Relays a Reddit queue to Discord. Install from [Devvit](https://developers.reddi
 
 | Posts | Comments |
 | ----- | -------- |
-| ![Post "b3p15" by u/KockaAdmiralac being filtered by AutoModerator.](https://github.com/user-attachments/assets/912f134b-baa6-40af-994f-403a96ea8b80) | ![Comment that says "This is a comment that says boopis" by u/KockaAdmiralac being filtered by AutoModerator.](https://github.com/user-attachments/assets/d9a96e9c-44a1-4fa7-bfff-d2b4753c8b6e) |
+| ![Post "b3p15" by u/KockaAdmiralac being filtered by AutoModerator.](https://i.imgur.com/xPdkEMz.png) | ![Comment that says "This is a comment that says boopis" by u/KockaAdmiralac being filtered by AutoModerator.](https://i.imgur.com/smaj6S7.png) |
 
 ## Changelog
 
