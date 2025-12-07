@@ -18,12 +18,7 @@ Devvit.addSchedulerJob({
 });
 
 Devvit.addTrigger({
-    event: 'AppInstall',
-    onEvent: setupJobs,
-});
-
-Devvit.addTrigger({
-    event: 'AppUpgrade',
+    events: ['AppInstall', 'AppUpgrade'],
     onEvent: setupJobs,
 });
 
@@ -88,6 +83,8 @@ async function handleDiscordError(message: string, response: Response): Promise<
  * @returns List of reasons why the item is in queue
  */
 function getReasons(item: Post | Comment): string[] {
+    // NOTE: Reddit, through the Devvit API, does not provide which moderators
+    // reported the item, unlike the old Data API which does.
     const reasons = [...item.modReportReasons, ...item.userReportReasons];
     if (item instanceof Post) {
         switch (item.removedByCategory) {
