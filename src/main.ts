@@ -268,7 +268,6 @@ async function sendItem(
     webhookUrl: string,
     sentMessages: Record<string, string>
 ): Promise<boolean> {
-    console.log(item.toJSON());
     const response = await fetch(`${webhookUrl}?wait=true`, {
         method: 'POST',
         headers: {
