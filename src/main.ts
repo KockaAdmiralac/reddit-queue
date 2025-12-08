@@ -1,7 +1,14 @@
+import {
+    AutomoderatorFilterComment,
+    AutomoderatorFilterPost,
+    CommentReport,
+    PostReport
+} from '@devvit/protos';
 import {Comment, Devvit, Post, TriggerContext} from '@devvit/public-api';
 
 const WEBHOOK_URL_OPTION = 'webhookUrl';
 const REDIS_HASH_KEY = 'modQueue';
+const REDIS_UPDATE_KEY = 'needsUpdate';
 
 Devvit.configure({
     // For sending HTTP requests to Discord.
@@ -20,6 +27,16 @@ Devvit.addSchedulerJob({
 Devvit.addTrigger({
     events: ['AppInstall', 'AppUpgrade'],
     onEvent: setupJobs,
+});
+
+Devvit.addTrigger({
+    events: ['AutomoderatorFilterComment', 'CommentReport'],
+    onEvent: handleComment,
+})
+
+Devvit.addTrigger({
+    events: ['AutomoderatorFilterPost', 'CommentReport'],
+    onEvent: handlePost,
 });
 
 Devvit.addSettings([
@@ -77,26 +94,41 @@ async function handleDiscordError(message: string, response: Response): Promise<
     return true;
 }
 
+interface UpdateInfo {
+    reason?: string;
+    removed?: boolean;
+}
+
+/**
+ * Queues an item to have its properties updated in the Discord channel.
+ * @param id Item ID
+ * @param update Properties that need updating
+ * @param context Context in which the event is being invoked
+ */
+async function queueNeedsUpdate(id: string, update: UpdateInfo, context: TriggerContext): Promise<void> {
+    await context.redis.hSet(REDIS_UPDATE_KEY, {
+        [`${id}:${Date.now()}`]: JSON.stringify(update),
+    });
+}
+
 /**
  * Gets a list of reasons why a an item is in the mod queue.
  * @param item Current mod queue item
  * @returns List of reasons why the item is in queue
  */
-function getReasons(item: Post | Comment): string[] {
+function getReasons(item: Post | Comment, updates: UpdateInfo[]): string[] {
     // NOTE: Reddit, through the Devvit API, does not provide which moderators
     // reported the item, unlike the old Data API which does.
-    const reasons = [...item.modReportReasons, ...item.userReportReasons];
+    const reasons = item.modReportReasons
+        .map(reason => `Mod report: ${reason}`)
+        .concat(updates
+            .map(update => update.reason)
+            .filter((reason): reason is string => Boolean(reason))
+        );
     if (item instanceof Post) {
         switch (item.removedByCategory) {
             case 'anti_evil_ops':
                 reasons.push('Removed by Anti-Evil Ops');
-                break;
-            case 'automod_filtered':
-                // NOTE: Reddit does not let you know the filter reason.
-                // NOTE: Reddit also does not let you know comments have been
-                // filtered by AutoModerator at all, so we can only supply the
-                // reason for posts.
-                reasons.push('Filtered by AutoModerator');
                 break;
             case 'community_ops':
                 reasons.push('Removed by Community Ops');
@@ -109,6 +141,24 @@ function getReasons(item: Post | Comment): string[] {
                 break;
             case 'reddit':
                 reasons.push('Removed by Reddit');
+                break;
+            case 'automod_filtered':
+                // Handled by separate events below.
+                break;
+            case undefined:
+                // Not removed.
+                break;
+            case 'author':
+                reasons.push('Removed by author. Why is this in the queue?');
+                break;
+            case 'deleted':
+                reasons.push('Deleted by author. Why is this in the queue?');
+                break;
+            case 'moderator':
+                reasons.push('Removed by moderator. Why is this in the queue?');
+                break;
+            default:
+                reasons.push(`Unknown removal category: ${item.removedByCategory}`);
                 break;
         }
     }
@@ -167,7 +217,7 @@ function getMedia(item: Post | Comment): ['image' | 'video', EmbedMedia | undefi
  * @param item Current mod queue item
  * @returns Embed to send in the channel for the current mod queue item
  */
-async function getDiscordEmbed(item: Post | Comment): Promise<any> {
+async function getDiscordEmbed(item: Post | Comment, updates: UpdateInfo[]): Promise<any> {
     const author = await item.getAuthor();
     const username = author ? author.username : '[deleted]';
     const [mediaType, media] = getMedia(item);
@@ -179,11 +229,13 @@ async function getDiscordEmbed(item: Post | Comment): Promise<any> {
             // only Snoovatars.
             icon_url: await author?.getSnoovatarUrl(),
         },
-        // NOTE: item.removed is always false even though the item has been
-        // removed by automod or otherwise.
-        color: item.removed ? 0xFF0000 : 0xFFA500,
+        // NOTE: item.removed is false when the item has been filtered by
+        // automod, which is why we have to check the event data.
+        color: (item.removed || updates.some(u => u.removed)) ?
+            0xFF0000 :
+            0xFFA500,
         fields: Object.entries({
-            'Reasons': getReasons(item)
+            'Reasons': getReasons(item, updates)
                 .map(reason => `- ${reason}`)
                 .join('\n'),
             'Content': item.body,
@@ -212,6 +264,7 @@ async function getDiscordEmbed(item: Post | Comment): Promise<any> {
  */
 async function sendItem(
     item: Post | Comment,
+    updates: UpdateInfo[],
     webhookUrl: string,
     sentMessages: Record<string, string>
 ): Promise<boolean> {
@@ -222,7 +275,7 @@ async function sendItem(
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            embeds: [await getDiscordEmbed(item)],
+            embeds: [await getDiscordEmbed(item, updates)],
         }),
     });
     if (!response.ok) {
@@ -259,6 +312,73 @@ async function removeItem(id: string, webhookUrl: string, context: TriggerContex
 }
 
 /**
+ * Updates a mod queue item in the Discord channel after its properties have
+ * changed.
+ * @param id Mod queue item ID
+ * @param updates Updates to be performed on the item
+ * @param webhookUrl Webhook URL previously used to send the item
+ * @param context Context in which the event is being invoked
+ * @returns false if ratelimited, true otherwise
+ */
+async function updateItem(
+    id: string,
+    updates: UpdateInfo[],
+    webhookUrl: string,
+    context: TriggerContext
+): Promise<boolean> {
+    const messageId = await context.redis.hGet(REDIS_HASH_KEY, id);
+    if (!messageId) {
+        console.error(`No message ID found in Redis for updated item ${id}.`);
+        return true;
+    }
+    const getMessageResponse = await fetch(`${webhookUrl}/messages/${messageId}`);
+    if (getMessageResponse.status === 404) {
+        // Message was deleted for some reason, we cannot update.
+        return true;
+    }
+    if (!getMessageResponse.ok) {
+        return handleDiscordError('Failed to get existing webhook message!', getMessageResponse);
+    }
+    const messageData = await getMessageResponse.json();
+    if (!messageData.embeds || messageData.embeds.length === 0) {
+        console.error(`No embeds found in existing webhook message for updated item ${id}.`);
+        return true;
+    }
+    const embed = messageData.embeds[0];
+    if (updates.some(update => update.removed)) {
+        embed.color = 0xFF0000;
+    }
+    const reasons = embed.fields.find((field: any) => field.name === 'Reasons');
+    const newReasons = updates
+        .map(update => update.reason)
+        .filter(Boolean)
+        .map(reason => `- ${reason}`)
+        .join('\n');
+    if (reasons) {
+        reasons.value = `${reasons.value}\n${newReasons}`.slice(0, 1024);
+    } else {
+        embed.fields.push({
+            name: 'Reasons',
+            value: newReasons.slice(0, 1024),
+        });
+    }
+    const response = await fetch(`${webhookUrl}/messages/${messageId}`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            embeds: [embed],
+        }),
+    });
+    if (!response.ok) {
+        return handleDiscordError('Failed to update webhook message!', response);
+    }
+    console.debug(`Updated message ${messageId} for item ${id}.`);
+    return true;
+}
+
+/**
  * Check the mod queue for new or resolved items and updates messages in the
  * Discord channel accordingly.
  * @param _ Unused
@@ -277,12 +397,26 @@ async function refreshQueue(_: any, context: TriggerContext): Promise<void> {
         type: 'all',
     }).all();
     const currentIdsSet = new Set<string>(modQueue.map(item => item.id));
+    const updates: ({id: string; key: string} & UpdateInfo)[] = Object.entries(
+        await context.redis.hGetAll(REDIS_UPDATE_KEY)
+    ).map(([compositeKey, value]) => ({
+        id: compositeKey.split(':')[0],
+        key: compositeKey,
+        ...JSON.parse(value),
+    }));
+    const rejectedUpdates = updates.filter(update => !currentIdsSet.has(update.id));
+    if (rejectedUpdates.length > 0) {
+        console.info('Updates received for resolved items:', rejectedUpdates);
+    }
     const sentMessages: Record<string, string> = {};
+    const sentUpdateKeys = rejectedUpdates.map(update => update.key);
     for (const item of modQueue.filter(item => !alreadySentIdsSet.has(item.id))) {
-        if (!await sendItem(item, webhookUrl, sentMessages)) {
+        const itemUpdates = updates.filter(update => update.id === item.id);
+        if (!await sendItem(item, itemUpdates, webhookUrl, sentMessages)) {
             // Discord ratelimited us.
             break;
         }
+        sentUpdateKeys.push(...itemUpdates.map(update => update.key));
     }
     const resolvedIds = alreadySentIds.filter(id => !currentIdsSet.has(id));
     for (const id of resolvedIds) {
@@ -291,12 +425,71 @@ async function refreshQueue(_: any, context: TriggerContext): Promise<void> {
             break;
         }
     }
+    const alreadySentUpdates = updates.filter(update =>
+        alreadySentIdsSet.has(update.id) &&
+        currentIdsSet.has(update.id)
+    ).reduce((acc, update) => {
+        acc[update.id] = [...acc[update.id], update];
+        return acc;
+    }, {} as Record<string, ({key: string} & UpdateInfo)[]>);
+    for (const [id, itemUpdates] of Object.entries(alreadySentUpdates)) {
+        if (!await updateItem(id, itemUpdates, webhookUrl, context)) {
+            // Discord ratelimited us.
+            break;
+        }
+        sentUpdateKeys.push(...itemUpdates.map(update => update.key));
+    }
     if (Object.keys(sentMessages).length > 0) {
         await context.redis.hSet(REDIS_HASH_KEY, sentMessages);
     }
     if (resolvedIds.length > 0) {
         await context.redis.hDel(REDIS_HASH_KEY, resolvedIds);
     }
+    if (sentUpdateKeys.length > 0) {
+        await context.redis.hDel(REDIS_UPDATE_KEY, sentUpdateKeys);
+    }
+}
+
+/**
+ * Receives AutoModerator comment filter and comment report events and queues
+ * the comment to have its properties updated in the Discord channel.
+ * @param event Filter or report event data
+ * @param context Context in which the event is being invoked
+ */
+async function handleComment(
+    event: AutomoderatorFilterComment | CommentReport,
+    context: TriggerContext
+): Promise<void> {
+    if (!event.comment) {
+        return;
+    }
+    const isFilter = 'removedAt' in event;
+    const reason = isFilter ? 'Filtered by AutoModerator' : 'User report';
+    await queueNeedsUpdate(event.comment.id, {
+        reason: `${reason}: ${event.reason}`,
+        removed: isFilter ? true : undefined,
+    }, context);
+}
+
+/**
+ * Receives AutoModerator post filter and post report events and queues
+ * the post to have its properties updated in the Discord channel.
+ * @param event Filter or report event data
+ * @param context Context in which the event is being invoked
+ */
+async function handlePost(
+    event: AutomoderatorFilterPost | PostReport,
+    context: TriggerContext
+): Promise<void> {
+    if (!event.post) {
+        return;
+    }
+    const isFilter = 'removedAt' in event;
+    const reason = isFilter ? 'Filtered by AutoModerator' : 'User report';
+    await queueNeedsUpdate(event.post.id, {
+        reason: `${reason}: ${event.reason}`,
+        removed: isFilter ? true : undefined,
+    }, context);
 }
 
 export default Devvit;
