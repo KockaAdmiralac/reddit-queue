@@ -10,6 +10,10 @@ Relays a Reddit queue to Discord. Install from [Devvit](https://developers.reddi
 
 ## Changelog
 
-### v1.0.0
+### v0.0.5
+
+When Discord returns an HTTP error, Devvit throws an exception rather than setting [`Response.ok`](https://developer.mozilla.org/en-US/docs/Web/API/Response/ok). This error should now be handled.
+
+### v0.0.4
 
 Initial release to Devvit. Previously used to use the Reddit Data API. For this version, check [commit 696e04](https://github.com/KockaAdmiralac/reddit-queue/tree/696e04815282a3b42625c31a2b3b8632c7cd9178).
