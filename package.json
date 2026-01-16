@@ -8,14 +8,14 @@
         "deploy": "devvit upload",
         "dev": "dotenv -e .env -- devvit playtest",
         "login": "devvit login",
-        "launch": "devvit publish",
+        "launch": "devvit publish --public",
         "type-check": "tsc --build"
     },
     "dependencies": {
-        "@devvit/public-api": "0.12.7"
+        "@devvit/public-api": "0.12.8"
     },
     "devDependencies": {
-        "devvit": "0.12.7",
+        "devvit": "0.12.8",
         "dotenv-cli": "11.0.0",
         "typescript": "5.9.3"
     }
