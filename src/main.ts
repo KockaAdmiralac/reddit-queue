@@ -56,6 +56,13 @@ Devvit.addSettings([
     }
 ]);
 
+// NOTE: Instead of failing by setting the Response.ok property, Devvit's
+// fetch function instead throws an exception.
+interface FetchError {
+    // All details of the HTTP error in string format
+    details: string;
+}
+
 /**
  * Sets up the scheduled job for updating the Discord messages to run every 30
  * seconds.
@@ -76,12 +83,13 @@ async function setupJobs(_: any, context: TriggerContext): Promise<void> {
 }
 
 /**
- * Handles errors received from the Discord API.
+ * Handles errors received from the Discord API, if Devvit had followed the
+ * Fetch API. Since it doesn't, this method is likely left unused.
  * @param message Message to emit when a Discord request error occurs
  * @param response Response from the Discord API
  * @returns false if ratelimited, true otherwise
  */
-async function handleDiscordError(message: string, response: Response): Promise<boolean> {
+async function handleDiscordErrorFetch(message: string, response: Response): Promise<boolean> {
     if (response.status === 429) {
         console.warn('Discord rate limit hit, skipping log.');
         return false;
@@ -91,6 +99,23 @@ async function handleDiscordError(message: string, response: Response): Promise<
         status: response.status,
         statusText: response.statusText,
     });
+    return true;
+}
+
+/**
+ * Handles errors received from the Discord API, given a httpbp.ClientError
+ * object that only contains the HTTP status code within a "details" string,
+ * because Devvit does not follow the Fetch API.
+ * @param message Message to emit when a Discord request error occurs
+ * @param response Response from the Discord API
+ * @returns false if ratelimited, true otherwise
+ */
+async function handleDiscordErrorDevvit(message: string, error: FetchError): Promise<boolean> {
+    if (error.details.includes('http status 429')) {
+        console.warn('Discord rate limit hit, skipping log.');
+        return false;
+    }
+    console.error(message, error);
     return true;
 }
 
@@ -268,23 +293,30 @@ async function sendItem(
     webhookUrl: string,
     sentMessages: Record<string, string>
 ): Promise<boolean> {
-    const response = await fetch(`${webhookUrl}?wait=true`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            embeds: [await getDiscordEmbed(item, updates)],
-        }),
-    });
-    if (!response.ok) {
-        return handleDiscordError('Failed to send webhook message!', response);
+    const errorText = 'Failed to send webhook message!';
+    try {
+        const response = await fetch(`${webhookUrl}?wait=true`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                embeds: [await getDiscordEmbed(item, updates)],
+            }),
+        });
+        if (!response.ok) {
+            // NOTE: This will not execute because Devvit's Fetch API does not
+            // follow the standard.
+            return handleDiscordErrorFetch(errorText, response);
+        }
+        const responseData = await response.json();
+        const messageId = responseData.id as string;
+        sentMessages[item.id] = messageId;
+        console.debug(`Sent message ${messageId} for item ${item.id}.`);
+        return true;
+    } catch (error: any) {
+        return handleDiscordErrorDevvit(errorText, error);
     }
-    const responseData = await response.json();
-    const messageId = responseData.id as string;
-    sentMessages[item.id] = messageId;
-    console.debug(`Sent message ${messageId} for item ${item.id}.`);
-    return true;
 }
 
 /**
@@ -300,14 +332,31 @@ async function removeItem(id: string, webhookUrl: string, context: TriggerContex
         console.error(`No message ID found in Redis for resolved item ${id}.`);
         return true;
     }
-    const response = await fetch(`${webhookUrl}/messages/${messageId}`, {
-        method: 'DELETE',
-    });
-    if (!response.ok && response.status !== 404) {
-        return handleDiscordError('Failed to delete webhook message!', response);
+    const errorText = 'Failed to delete webhook message!';
+    try {
+        const response = await fetch(`${webhookUrl}/messages/${messageId}`, {
+            method: 'DELETE',
+        });
+        console.debug(`Deleted message ${messageId} for resolved item ${id}.`);
+        if (!response.ok && response.status !== 404) {
+            // NOTE: This will not execute because Devvit's Fetch API does not
+            // follow the standard.
+            return handleDiscordErrorFetch(errorText, response);
+        }
+        return true;
+    } catch (error: any) {
+        if (
+            error &&
+            typeof error.details === 'string' &&
+            error.details.includes('http status 404')
+        ) {
+            // The message was already deleted, likely by a moderator of the
+            // server.
+            return true;
+        } else {
+            return handleDiscordErrorDevvit(errorText, error);
+        }
     }
-    console.debug(`Deleted message ${messageId} for resolved item ${id}.`);
-    return true;
 }
 
 /**
@@ -330,15 +379,35 @@ async function updateItem(
         console.error(`No message ID found in Redis for updated item ${id}.`);
         return true;
     }
-    const getMessageResponse = await fetch(`${webhookUrl}/messages/${messageId}`);
-    if (getMessageResponse.status === 404) {
-        // Message was deleted for some reason, we cannot update.
-        return true;
+    const errorTextGet = 'Failed to get existing webhook message!';
+    const errorTextUpdate = 'Failed to update webhook message!';
+    let messageData: any = null;
+    try {
+        const getMessageResponse = await fetch(`${webhookUrl}/messages/${messageId}`);
+        if (getMessageResponse.status === 404) {
+            // The message was already deleted, likely by a moderator of the
+            // server.
+            return true;
+        }
+        if (!getMessageResponse.ok) {
+            // NOTE: This will not execute because Devvit's Fetch API does not
+            // follow the standard.
+            return handleDiscordErrorFetch(errorTextGet, getMessageResponse);
+        }
+        messageData = await getMessageResponse.json();
+    } catch (error: any) {
+        if (
+            error &&
+            typeof error.details === 'string' &&
+            error.details.includes('http status 404')
+        ) {
+            // The message was already deleted, likely by a moderator of the
+            // server.
+            return true;
+        } else {
+            return handleDiscordErrorDevvit(errorTextGet, error);
+        }
     }
-    if (!getMessageResponse.ok) {
-        return handleDiscordError('Failed to get existing webhook message!', getMessageResponse);
-    }
-    const messageData = await getMessageResponse.json();
     if (!messageData.embeds || messageData.embeds.length === 0) {
         console.error(`No embeds found in existing webhook message for updated item ${id}.`);
         return true;
@@ -361,17 +430,21 @@ async function updateItem(
             value: newReasons.slice(0, 1024),
         });
     }
-    const response = await fetch(`${webhookUrl}/messages/${messageId}`, {
-        method: 'PATCH',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            embeds: [embed],
-        }),
-    });
-    if (!response.ok) {
-        return handleDiscordError('Failed to update webhook message!', response);
+    try {
+        const response = await fetch(`${webhookUrl}/messages/${messageId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                embeds: [embed],
+            }),
+        });
+        if (!response.ok) {
+            return handleDiscordErrorFetch(errorTextUpdate, response);
+        }
+    } catch (error: any) {
+        return handleDiscordErrorDevvit(errorTextUpdate, error);
     }
     console.debug(`Updated message ${messageId} for item ${id}.`);
     return true;
