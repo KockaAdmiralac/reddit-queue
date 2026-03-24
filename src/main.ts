@@ -501,7 +501,7 @@ async function refreshQueue(_: any, context: TriggerContext): Promise<void> {
         alreadySentIdsSet.has(update.id) &&
         currentIdsSet.has(update.id)
     ).reduce((acc, update) => {
-        acc[update.id] = [...acc[update.id], update];
+        acc[update.id] = [...(acc[update.id] || []), update];
         return acc;
     }, {} as Record<string, ({key: string} & UpdateInfo)[]>);
     for (const [id, itemUpdates] of Object.entries(alreadySentUpdates)) {
