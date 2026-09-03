@@ -416,7 +416,7 @@ async function updateItem(
     if (updates.some(update => update.removed)) {
         embed.color = 0xFF0000;
     }
-    const reasons = embed.fields.find((field: any) => field.name === 'Reasons');
+    const reasons = embed.fields?.find((field: any) => field.name === 'Reasons');
     const newReasons = updates
         .map(update => update.reason)
         .filter(Boolean)
@@ -482,19 +482,35 @@ async function refreshQueue(_: any, context: TriggerContext): Promise<void> {
     }
     const sentMessages: Record<string, string> = {};
     const sentUpdateKeys = rejectedUpdates.map(update => update.key);
-    for (const item of modQueue.filter(item => !alreadySentIdsSet.has(item.id))) {
-        const itemUpdates = updates.filter(update => update.id === item.id);
-        if (!await sendItem(item, itemUpdates, webhookUrl, sentMessages)) {
-            // Discord ratelimited us.
-            break;
+    try {
+        for (const item of modQueue.filter(item => !alreadySentIdsSet.has(item.id))) {
+            const itemUpdates = updates.filter(update => update.id === item.id);
+            if (!await sendItem(item, itemUpdates, webhookUrl, sentMessages)) {
+                // Discord ratelimited us.
+                break;
+            }
+            sentUpdateKeys.push(...itemUpdates.map(update => update.key));
         }
-        sentUpdateKeys.push(...itemUpdates.map(update => update.key));
+    } catch (error: any) {
+        console.error('Error occurred while sending items:', error);
+    } finally {
+        if (Object.keys(sentMessages).length > 0) {
+            await context.redis.hSet(REDIS_HASH_KEY, sentMessages);
+        }
     }
     const resolvedIds = alreadySentIds.filter(id => !currentIdsSet.has(id));
-    for (const id of resolvedIds) {
-        if (!await removeItem(id, webhookUrl, context)) {
-            // Discord ratelimited us.
-            break;
+    try {
+        for (const id of resolvedIds) {
+            if (!await removeItem(id, webhookUrl, context)) {
+                // Discord ratelimited us.
+                break;
+            }
+        }
+    } catch (error: any) {
+        console.error('Error occurred while removing items:', error);
+    } finally {
+        if (resolvedIds.length > 0) {
+            await context.redis.hDel(REDIS_HASH_KEY, resolvedIds);
         }
     }
     const alreadySentUpdates = updates.filter(update =>
@@ -504,21 +520,20 @@ async function refreshQueue(_: any, context: TriggerContext): Promise<void> {
         acc[update.id] = [...(acc[update.id] || []), update];
         return acc;
     }, {} as Record<string, ({key: string} & UpdateInfo)[]>);
-    for (const [id, itemUpdates] of Object.entries(alreadySentUpdates)) {
-        if (!await updateItem(id, itemUpdates, webhookUrl, context)) {
-            // Discord ratelimited us.
-            break;
+    try {
+        for (const [id, itemUpdates] of Object.entries(alreadySentUpdates)) {
+            if (!await updateItem(id, itemUpdates, webhookUrl, context)) {
+                // Discord ratelimited us.
+                break;
+            }
+            sentUpdateKeys.push(...itemUpdates.map(update => update.key));
         }
-        sentUpdateKeys.push(...itemUpdates.map(update => update.key));
-    }
-    if (Object.keys(sentMessages).length > 0) {
-        await context.redis.hSet(REDIS_HASH_KEY, sentMessages);
-    }
-    if (resolvedIds.length > 0) {
-        await context.redis.hDel(REDIS_HASH_KEY, resolvedIds);
-    }
-    if (sentUpdateKeys.length > 0) {
-        await context.redis.hDel(REDIS_UPDATE_KEY, sentUpdateKeys);
+    } catch (error: any) {
+        console.error('Error occurred while updating items:', error);
+    } finally {
+        if (sentUpdateKeys.length > 0) {
+            await context.redis.hDel(REDIS_UPDATE_KEY, sentUpdateKeys);
+        }
     }
 }
 
